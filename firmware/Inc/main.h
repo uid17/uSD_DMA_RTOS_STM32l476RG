@@ -82,9 +82,14 @@
 #ifdef __cplusplus
  extern "C" {
 #endif
-void _Error_Handler(char *, int);
+
+/* Includes ------------------------------------------------------------------*/
+#include "stm32l4xx_hal.h"
 
 #define Error_Handler() _Error_Handler(__FILE__, __LINE__)
+#include "cmsis_os.h"
+#include "ff_gen_drv.h"
+#include "sd_diskio.h"
 #ifdef __cplusplus
 }
 #endif
