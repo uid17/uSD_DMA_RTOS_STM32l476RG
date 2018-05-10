@@ -92,6 +92,7 @@
 /* USER CODE END 0 */ 
 #else
 /* USER CODE BEGIN BSP_H_CODE */
+#ifndef SD_CARD
 /* Exported functions --------------------------------------------------------*/   
 uint8_t BSP_SD_Init(void);
 uint8_t BSP_SD_ITConfig(void);
@@ -105,6 +106,43 @@ uint8_t BSP_SD_Erase(uint32_t StartAddr, uint32_t EndAddr);
 uint8_t BSP_SD_GetCardState(void);
 void    BSP_SD_GetCardInfo(BSP_SD_CardInfo *CardInfo);
 uint8_t BSP_SD_IsDetected(void);
+#else
+
+#define SD_DETECT_PIN                    BTN_Pin
+#define SD_DETECT_GPIO_PORT              BTN_GPIO_Port
+#define __SD_DETECT_GPIO_CLK_ENABLE()    __HAL_RCC_GPIOC_CLK_ENABLE()
+#define SD_DETECT_IRQn                   BTN_EXTI_IRQn
+#define SD_Detect_IRQHandler             BTN_EXTI_IRQHandler
+
+/* DMA definitions for SD DMA transfer */
+#define __DMAx_TxRx_CLK_ENABLE            __HAL_RCC_DMA2_CLK_ENABLE
+#define SD_DMAx_Tx_STREAM                 DMA2_Channel4
+#define SD_DMAx_Rx_STREAM                 DMA2_Channel4
+#define SD_DMAx_Tx_IRQn                   DMA2_Channel4_IRQn
+#define SD_DMAx_Rx_IRQn                   DMA2_Channel4_IRQn
+#define SD_DMAx_Tx_IRQHandler             DMA2_Channel4_IRQHandler
+#define SD_DMAx_Rx_IRQHandler             DMA2_Channel4_IRQHandler
+//functions
+uint8_t BSP_SD_Init(void);
+uint8_t BSP_SD_DeInit(void);
+uint8_t BSP_SD_ITConfig(void);
+uint8_t BSP_SD_ReadBlocks(uint32_t *pData, uint32_t ReadAddr, uint32_t NumOfBlocks, uint32_t Timeout);
+uint8_t BSP_SD_WriteBlocks(uint32_t *pData, uint32_t WriteAddr, uint32_t NumOfBlocks, uint32_t Timeout);
+uint8_t BSP_SD_ReadBlocks_DMA(uint32_t *pData, uint32_t ReadAddr, uint32_t NumOfBlocks);
+uint8_t BSP_SD_WriteBlocks_DMA(uint32_t *pData, uint32_t WriteAddr, uint32_t NumOfBlocks);
+uint8_t BSP_SD_Erase(uint32_t StartAddr, uint32_t EndAddr);
+void    BSP_SD_IRQHandler(void);
+void    BSP_SD_DMA_Tx_IRQHandler(void);
+void    BSP_SD_DMA_Rx_IRQHandler(void);
+uint8_t BSP_SD_GetCardState(void);
+void    BSP_SD_GetCardInfo(BSP_SD_CardInfo *CardInfo);
+uint8_t BSP_SD_IsDetected(void);
+
+//weak
+void    BSP_SD_MspInit(SD_HandleTypeDef *hsd, void *Params);
+void    BSP_SD_MspDeInit(SD_HandleTypeDef *hsd, void *Params);
+
+#endif
 /* USER CODE END BSP_H_CODE */
 #endif
 /* USER CODE BEGIN CallBacksSection_H */

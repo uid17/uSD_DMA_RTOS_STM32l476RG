@@ -52,7 +52,7 @@
 #include "fatfs.h"
 
 /* USER CODE BEGIN Includes */
-
+#define FATFS_MKFS_ALLOWED 1
 /* USER CODE END Includes */
 
 /* Private variables ---------------------------------------------------------*/
@@ -63,11 +63,38 @@ DMA_HandleTypeDef hdma_sdmmc1;
 
 UART_HandleTypeDef huart2;
 
-osThreadId SDTaskHandle;
+osThreadId SDcardTaskHandle;
+osThreadId CommTaskHandle;
+osThreadId SensorTaskHandle;
+osThreadId LEDTaskHandle;
+osThreadId ControlTaskHandle;
+osMessageQId LEDTaskMsgQueueHandle;
+osMessageQId CommTaskMsgQueueHandle;
+osMessageQId SensorTaskMsgQueueHandle;
+osMessageQId SDcardTaskMsgQueueHandle;
+osMessageQId ControlTaskMsgQueueHandle;
+osSemaphoreId semSDFIFOHandle;
+osSemaphoreId semUARTFIFOHandle;
+osSemaphoreId semCTL_INFIFOHandle;
+osSemaphoreId semCTL_OUTFIFOHandle;
 
 /* USER CODE BEGIN PV */
 /* Private variables ---------------------------------------------------------*/
+FATFS SDFatFs;  /* File system object for SD card logical drive */
+FIL MyFile;     /* File object */
+char SDPath[4]; /* SD card logical drive path */
 
+typedef enum {
+  CARD_CONNECTED,
+  CARD_DISCONNECTED,
+}SD_ConnectionStateTypeDef;
+
+static uint8_t isInitialized = 0;
+static uint8_t isConnected = 0;
+#if FATFS_MKFS_ALLOWED
+static uint8_t isFsCreated = 0;
+#endif
+uint8_t workBuffer[2 * _MAX_SS];
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -77,10 +104,16 @@ static void MX_DMA_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_RTC_Init(void);
 static void MX_SDMMC1_SD_Init(void);
-void StartSDTask(void const * argument);
+void SDcardTaskFunc(void const * argument);
+void CommTaskFunc(void const * argument);
+void SensorTaskFunc(void const * argument);
+void LEDTaskFunc(void const * argument);
+void ControlTaskFunc(void const * argument);
 
 /* USER CODE BEGIN PFP */
 /* Private function prototypes -----------------------------------------------*/
+static void SD_Initialize(void);
+static void FS_FileOperations(void);
 
 /* USER CODE END PFP */
 
@@ -122,12 +155,33 @@ int main(void)
   MX_RTC_Init();
   MX_SDMMC1_SD_Init();
   /* USER CODE BEGIN 2 */
-
+  if(FATFS_LinkDriver(&SD_Driver, SDPath) == 0)
+  {
+    SD_Initialize();
+    FS_FileOperations();
+  }
   /* USER CODE END 2 */
 
   /* USER CODE BEGIN RTOS_MUTEX */
   /* add mutexes, ... */
   /* USER CODE END RTOS_MUTEX */
+
+  /* Create the semaphores(s) */
+  /* definition and creation of semSDFIFO */
+  osSemaphoreDef(semSDFIFO);
+  semSDFIFOHandle = osSemaphoreCreate(osSemaphore(semSDFIFO), 400);
+
+  /* definition and creation of semUARTFIFO */
+  osSemaphoreDef(semUARTFIFO);
+  semUARTFIFOHandle = osSemaphoreCreate(osSemaphore(semUARTFIFO), 20);
+
+  /* definition and creation of semCTL_INFIFO */
+  osSemaphoreDef(semCTL_INFIFO);
+  semCTL_INFIFOHandle = osSemaphoreCreate(osSemaphore(semCTL_INFIFO), 10);
+
+  /* definition and creation of semCTL_OUTFIFO */
+  osSemaphoreDef(semCTL_OUTFIFO);
+  semCTL_OUTFIFOHandle = osSemaphoreCreate(osSemaphore(semCTL_OUTFIFO), 10);
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
   /* add semaphores, ... */
@@ -138,13 +192,50 @@ int main(void)
   /* USER CODE END RTOS_TIMERS */
 
   /* Create the thread(s) */
-  /* definition and creation of SDTask */
-  osThreadDef(SDTask, StartSDTask, osPriorityNormal, 0, 2048);
-  SDTaskHandle = osThreadCreate(osThread(SDTask), NULL);
+  /* definition and creation of SDcardTask */
+  osThreadDef(SDcardTask, SDcardTaskFunc, osPriorityBelowNormal, 0, 2048);
+  SDcardTaskHandle = osThreadCreate(osThread(SDcardTask), NULL);
+
+  /* definition and creation of CommTask */
+  osThreadDef(CommTask, CommTaskFunc, osPriorityNormal, 0, 256);
+  CommTaskHandle = osThreadCreate(osThread(CommTask), NULL);
+
+  /* definition and creation of SensorTask */
+  osThreadDef(SensorTask, SensorTaskFunc, osPriorityHigh, 0, 256);
+  SensorTaskHandle = osThreadCreate(osThread(SensorTask), NULL);
+
+  /* definition and creation of LEDTask */
+  osThreadDef(LEDTask, LEDTaskFunc, osPriorityLow, 0, 128);
+  LEDTaskHandle = osThreadCreate(osThread(LEDTask), NULL);
+
+  /* definition and creation of ControlTask */
+  osThreadDef(ControlTask, ControlTaskFunc, osPriorityHigh, 0, 256);
+  ControlTaskHandle = osThreadCreate(osThread(ControlTask), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
   /* USER CODE END RTOS_THREADS */
+
+  /* Create the queue(s) */
+  /* definition and creation of LEDTaskMsgQueue */
+  osMessageQDef(LEDTaskMsgQueue, 16, uint16_t);
+  LEDTaskMsgQueueHandle = osMessageCreate(osMessageQ(LEDTaskMsgQueue), NULL);
+
+  /* definition and creation of CommTaskMsgQueue */
+  osMessageQDef(CommTaskMsgQueue, 16, uint16_t);
+  CommTaskMsgQueueHandle = osMessageCreate(osMessageQ(CommTaskMsgQueue), NULL);
+
+  /* definition and creation of SensorTaskMsgQueue */
+  osMessageQDef(SensorTaskMsgQueue, 32, uint16_t);
+  SensorTaskMsgQueueHandle = osMessageCreate(osMessageQ(SensorTaskMsgQueue), NULL);
+
+  /* definition and creation of SDcardTaskMsgQueue */
+  osMessageQDef(SDcardTaskMsgQueue, 410, uint16_t);
+  SDcardTaskMsgQueueHandle = osMessageCreate(osMessageQ(SDcardTaskMsgQueue), NULL);
+
+  /* definition and creation of ControlTaskMsgQueue */
+  osMessageQDef(ControlTaskMsgQueue, 16, uint16_t);
+  ControlTaskMsgQueueHandle = osMessageCreate(osMessageQ(ControlTaskMsgQueue), NULL);
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
@@ -309,7 +400,7 @@ static void MX_SDMMC1_SD_Init(void)
   hsd1.Init.ClockPowerSave = SDMMC_CLOCK_POWER_SAVE_DISABLE;
   hsd1.Init.BusWide = SDMMC_BUS_WIDE_1B;
   hsd1.Init.HardwareFlowControl = SDMMC_HARDWARE_FLOW_CONTROL_DISABLE;
-  hsd1.Init.ClockDiv = 0;
+  hsd1.Init.ClockDiv = 3;
 
 }
 
@@ -319,7 +410,7 @@ static void MX_USART2_UART_Init(void)
 
   huart2.Instance = USART2;
   huart2.Init.BaudRate = 115200;
-  huart2.Init.WordLength = UART_WORDLENGTH_7B;
+  huart2.Init.WordLength = UART_WORDLENGTH_8B;
   huart2.Init.StopBits = UART_STOPBITS_1;
   huart2.Init.Parity = UART_PARITY_NONE;
   huart2.Init.Mode = UART_MODE_TX_RX;
@@ -343,9 +434,9 @@ static void MX_DMA_Init(void)
   __HAL_RCC_DMA2_CLK_ENABLE();
 
   /* DMA interrupt init */
-  /* DMA2_Channel5_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA2_Channel5_IRQn, 0, 0);
-  HAL_NVIC_EnableIRQ(DMA2_Channel5_IRQn);
+  /* DMA2_Channel4_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Channel4_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Channel4_IRQn);
 
 }
 
@@ -371,7 +462,7 @@ static void MX_GPIO_Init(void)
 
   /*Configure GPIO pin : BTN_Pin */
   GPIO_InitStruct.Pin = BTN_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(BTN_GPIO_Port, &GPIO_InitStruct);
 
@@ -382,14 +473,104 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(LED_GPIO_Port, &GPIO_InitStruct);
 
+  /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(EXTI15_10_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
+
 }
 
 /* USER CODE BEGIN 4 */
+static void SD_Initialize(void)
+{
+  if (isInitialized == 0)
+  {
+    BSP_SD_Init();
+    BSP_SD_ITConfig();
 
+    if(BSP_SD_IsDetected())
+    {
+      isInitialized = 1;
+    }
+  }
+}
+
+static void FS_FileOperations(void)
+{
+  FRESULT res;                                          /* FatFs function common result code */
+  uint32_t byteswritten, bytesread;                     /* File write/read counts */
+  uint8_t wtext[] = "stm32l476g_eval: This is STM32 working with FatFs uSD + DMA + FreeRTOS"; /* File write buffer */
+  uint8_t rtext[100];                                   /* File read buffer */
+
+  /* Register the file system object to the FatFs module */
+  if(f_mount(&SDFatFs, (TCHAR const*)SDPath, 1) == FR_OK)
+  {
+#if FATFS_MKFS_ALLOWED
+    /* check whether the FS has been already created */
+    if (isFsCreated == 0)
+    {
+      if(f_mkfs(SDPath, FM_ANY, 0, workBuffer, sizeof(workBuffer)) != FR_OK)
+      {
+    	HAL_GPIO_WritePin(LED_GPIO_Port,LED_Pin,GPIO_PIN_SET);
+        return;
+      }
+      isFsCreated = 1;
+    }
+#endif
+
+    /* Create and Open a new text file object with write access */
+    if(f_open(&MyFile, "STM32.TXT", FA_CREATE_ALWAYS | FA_WRITE) == FR_OK)
+    {
+      /* Write data to the text file */
+      res = f_write(&MyFile, wtext, sizeof(wtext), (void *)&byteswritten);
+
+      if((byteswritten > 0) && (res == FR_OK))
+      {
+        /* Close the open text file */
+        f_close(&MyFile);
+
+        /* Open the text file object with read access */
+        if(f_open(&MyFile, "STM32.TXT", FA_READ) == FR_OK)
+        {
+          /* Read data from the text file */
+          res = f_read(&MyFile, rtext, sizeof(rtext), (void *)&bytesread);
+
+          if((bytesread > 0) && (res == FR_OK))
+          {
+            /* Close the open text file */
+            f_close(&MyFile);
+
+            /* Compare read data with the expected data */
+            if((bytesread == byteswritten))
+            {
+              /* Success of the demo: no error occurrence */
+              HAL_GPIO_WritePin(LED_GPIO_Port,LED_Pin,GPIO_PIN_SET);
+              return;
+            }
+          }
+        }
+      }
+    }
+  }
+  /* Error */
+  HAL_GPIO_WritePin(LED_GPIO_Port,LED_Pin,GPIO_PIN_RESET);
+}
+
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+  /* Prevent unused argument(s) compilation warning */
+  if(GPIO_Pin==BTN_Pin)
+  {
+	  HAL_GPIO_TogglePin(LED_GPIO_Port,LED_Pin);
+  }
+
+  /* NOTE: This function should not be modified, when the callback is needed,
+           the HAL_GPIO_EXTI_Callback could be implemented in the user file
+   */
+}
 /* USER CODE END 4 */
 
-/* StartSDTask function */
-void StartSDTask(void const * argument)
+/* SDcardTaskFunc function */
+void SDcardTaskFunc(void const * argument)
 {
   /* init code for FATFS */
   MX_FATFS_Init();
@@ -398,9 +579,58 @@ void StartSDTask(void const * argument)
   /* Infinite loop */
   for(;;)
   {
-    osDelay(1);
+	//HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
+    osDelay(1000);
   }
   /* USER CODE END 5 */ 
+}
+
+/* CommTaskFunc function */
+void CommTaskFunc(void const * argument)
+{
+  /* USER CODE BEGIN CommTaskFunc */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END CommTaskFunc */
+}
+
+/* SensorTaskFunc function */
+void SensorTaskFunc(void const * argument)
+{
+  /* USER CODE BEGIN SensorTaskFunc */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END SensorTaskFunc */
+}
+
+/* LEDTaskFunc function */
+void LEDTaskFunc(void const * argument)
+{
+  /* USER CODE BEGIN LEDTaskFunc */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END LEDTaskFunc */
+}
+
+/* ControlTaskFunc function */
+void ControlTaskFunc(void const * argument)
+{
+  /* USER CODE BEGIN ControlTaskFunc */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END ControlTaskFunc */
 }
 
 /**

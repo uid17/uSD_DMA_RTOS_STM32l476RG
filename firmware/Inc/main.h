@@ -61,6 +61,7 @@
 
 #define BTN_Pin GPIO_PIN_13
 #define BTN_GPIO_Port GPIOC
+#define BTN_EXTI_IRQn EXTI15_10_IRQn
 #define USART_TX_Pin GPIO_PIN_2
 #define USART_TX_GPIO_Port GPIOA
 #define USART_RX_Pin GPIO_PIN_3
@@ -82,16 +83,9 @@
 #ifdef __cplusplus
  extern "C" {
 #endif
-
-/* Includes ------------------------------------------------------------------*/
-#include "stm32l4xx_hal.h"
-#include "stm32l4xx_nucleo_sd.h"
+void _Error_Handler(char *, int);
 
 #define Error_Handler() _Error_Handler(__FILE__, __LINE__)
-#include "cmsis_os.h"
-#include "ff_gen_drv.h"
-#include "sd_diskio.h"
-
 #ifdef __cplusplus
 }
 #endif

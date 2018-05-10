@@ -54,7 +54,7 @@ FATFS SDFatFS;    /* File system object for SD logical drive */
 FIL SDFile;       /* File object for SD */
 
 /* USER CODE BEGIN Variables */
-
+extern RTC_HandleTypeDef hrtc;
 /* USER CODE END Variables */    
 
 void MX_FATFS_Init(void) 
@@ -75,7 +75,31 @@ void MX_FATFS_Init(void)
 DWORD get_fattime(void)
 {
   /* USER CODE BEGIN get_fattime */
-  return 0;
+    DWORD current_time = 0;
+	/* Format:
+	bit31:25 	Year origin from the 1980 (0..127, e.g. 37 for 2017)
+	bit24:21 	Month (1..12)
+	bit20:16 	Day of the month(1..31)
+	bit15:11 	Hour (0..23)
+	bit10:5 	Minute (0..59)
+	bit4:0 		Second / 2 (0..29, e.g. 25 for 50)
+	*/
+	RTC_DateTypeDef sdatestructureget;
+  RTC_TimeTypeDef stimestructureget;
+
+  /* Get the RTC current Time */
+  HAL_RTC_GetTime(&hrtc, &stimestructureget, RTC_FORMAT_BIN);
+  /* Get the RTC current Date */
+  HAL_RTC_GetDate(&hrtc, &sdatestructureget, RTC_FORMAT_BIN);
+
+	current_time = 	  ( (sdatestructureget.Year+20) * (2 ^ 25) ) 	// Year is counting from 1980, so add 20 years
+									+ ( sdatestructureget.Date * (2 ^ 21) )
+									+ ( sdatestructureget.Date * (2 ^ 16) )
+									+ ( stimestructureget.Hours * (2 ^ 11) )
+									+ ( stimestructureget.Minutes * (2 ^ 5) )
+									+ stimestructureget.Seconds/2;
+
+  return current_time;
   /* USER CODE END get_fattime */  
 }
 

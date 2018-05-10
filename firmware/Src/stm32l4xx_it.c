@@ -37,7 +37,7 @@
 #include "cmsis_os.h"
 
 /* USER CODE BEGIN 0 */
-
+#include "bsp_driver_sd.h"
 /* USER CODE END 0 */
 
 /* External variables --------------------------------------------------------*/
@@ -72,6 +72,20 @@ void SysTick_Handler(void)
 /******************************************************************************/
 
 /**
+* @brief This function handles EXTI line[15:10] interrupts.
+*/
+void EXTI15_10_IRQHandler(void)
+{
+  /* USER CODE BEGIN EXTI15_10_IRQn 0 */
+
+  /* USER CODE END EXTI15_10_IRQn 0 */
+  HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_13);
+  /* USER CODE BEGIN EXTI15_10_IRQn 1 */
+
+  /* USER CODE END EXTI15_10_IRQn 1 */
+}
+
+/**
 * @brief This function handles SDMMC1 global interrupt.
 */
 void SDMMC1_IRQHandler(void)
@@ -96,21 +110,33 @@ void TIM6_DAC_IRQHandler(void)
   HAL_TIM_IRQHandler(&htim6);
   /* USER CODE BEGIN TIM6_DAC_IRQn 1 */
 
+
   /* USER CODE END TIM6_DAC_IRQn 1 */
 }
 
 /**
-* @brief This function handles DMA2 channel5 global interrupt.
+* @brief This function handles DMA2 channel4 global interrupt.
 */
-void DMA2_Channel5_IRQHandler(void)
+void DMA2_Channel4_IRQHandler(void)
 {
-  /* USER CODE BEGIN DMA2_Channel5_IRQn 0 */
-
-  /* USER CODE END DMA2_Channel5_IRQn 0 */
+  /* USER CODE BEGIN DMA2_Channel4_IRQn 0 */
+#ifndef SD_CARD
+  /* USER CODE END DMA2_Channel4_IRQn 0 */
   HAL_DMA_IRQHandler(&hdma_sdmmc1);
-  /* USER CODE BEGIN DMA2_Channel5_IRQn 1 */
-
-  /* USER CODE END DMA2_Channel5_IRQn 1 */
+  /* USER CODE BEGIN DMA2_Channel4_IRQn 1 */
+#else
+  if((hsd1.Context == (SD_CONTEXT_DMA | SD_CONTEXT_READ_SINGLE_BLOCK)) ||
+     (hsd1.Context == (SD_CONTEXT_DMA | SD_CONTEXT_READ_MULTIPLE_BLOCK)))
+  {
+    BSP_SD_DMA_Rx_IRQHandler();
+  }
+  else if((hsd1.Context == (SD_CONTEXT_DMA | SD_CONTEXT_WRITE_SINGLE_BLOCK)) ||
+         (hsd1.Context == (SD_CONTEXT_DMA | SD_CONTEXT_WRITE_MULTIPLE_BLOCK)))
+ {
+   BSP_SD_DMA_Tx_IRQHandler();
+ }
+#endif
+  /* USER CODE END DMA2_Channel4_IRQn 1 */
 }
 
 /* USER CODE BEGIN 1 */
